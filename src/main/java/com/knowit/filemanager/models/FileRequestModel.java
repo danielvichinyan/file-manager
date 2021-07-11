@@ -2,7 +2,7 @@ package com.knowit.filemanager.models;
 
 import org.springframework.web.multipart.MultipartFile;
 
-public class AvatarImageRequestModel {
+public class FileRequestModel {
 
     private MultipartFile multipartFile;
 
@@ -23,5 +23,4 @@ public class AvatarImageRequestModel {
     public void setUserId(String userId) {
         this.userId = userId;
     }
-
 }

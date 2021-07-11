@@ -1,120 +1,107 @@
 package com.knowit.filemanager.services;
 
-import com.knowit.filemanager.models.AvatarImageResponseModel;
-import com.knowit.filemanager.models.ImageRequestModel;
-import com.knowit.filemanager.models.ImageResponseModel;
-import com.knowit.filemanager.utils.ThumbnailUtils;
-import org.apache.kafka.streams.kstream.KStream;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
+import com.knowit.filemanager.config.StorageProperties;
+import com.knowit.filemanager.exceptions.FileNotFoundException;
+import com.knowit.filemanager.exceptions.StorageException;
+import com.knowit.filemanager.models.FileResponseModel;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cloud.stream.function.StreamBridge;
-import org.springframework.context.annotation.Bean;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
 import org.springframework.stereotype.Service;
+import org.springframework.util.FileSystemUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
-import reactor.core.publisher.Mono;
 
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
-import java.io.File;
+import javax.annotation.PostConstruct;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.MalformedURLException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.function.Consumer;
-import java.util.function.Supplier;
+import java.nio.file.StandardCopyOption;
+import java.util.stream.Stream;
 
 @Service
 public class FileServiceImpl implements FileService {
 
-    private final static Logger logger = LoggerFactory.getLogger(FileServiceImpl.class);
-    private final StreamBridge streamBridge;
-    private final String contestsPath;
-    private final String avatarPath;
+    private final Path rootLocation;
 
-    public FileServiceImpl(
-            StreamBridge streamBridge,
-            @Value("${contests.file.path}") String contestsPath,
-            @Value("${avatar.file.path}") String avatarPath) {
-        this.streamBridge = streamBridge;
-        this.contestsPath = contestsPath;
-        this.avatarPath = avatarPath;
+    @Autowired
+    public FileServiceImpl(StorageProperties properties) {
+        this.rootLocation = Paths.get(properties.getLocation());
     }
 
-    public void uploadLectureImage(byte[] image, String contestsId, String name, String format) throws IOException {
+    @Override
+    @PostConstruct
+    public void init() {
+        try {
+            Files.createDirectories(rootLocation);
+        } catch (IOException e) {
+            throw new StorageException("Could not initialize storage location", e);
+        }
+    }
 
-        Path path = Paths.get(contestsPath.concat("/").concat(contestsId));
-
-        if (!Files.exists(path)) {
-            Files.createDirectories(path);
+    @Override
+    public String store(MultipartFile file) {
+        String filename = StringUtils.cleanPath(file.getOriginalFilename());
+        try {
+            if (file.isEmpty()) {
+                throw new StorageException("Failed to store empty file " + filename);
+            }
+            if (filename.contains("..")) {
+                // This is a security check
+                throw new StorageException(
+                        "Cannot store file with relative path outside current directory "
+                                + filename);
+            }
+            try (InputStream inputStream = file.getInputStream()) {
+                Files.copy(inputStream, this.rootLocation.resolve(filename),
+                        StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (IOException e) {
+            throw new StorageException("Failed to store file " + filename, e);
         }
 
-        ByteArrayInputStream bytes = new ByteArrayInputStream(image);
-        BufferedImage bufferedImage = ImageIO.read(bytes);
-        File file = new File(path.toString(), name.concat(".").concat(format));
-        ImageIO.write(bufferedImage, format, file);
-        Path url = Path.of(file.toURI());
+        return filename;
+    }
 
-        ImageResponseModel imageResponse = new ImageResponseModel();
-        imageResponse.setId(contestsId);
-        imageResponse.setImageUrl(url.toString());
-        imageResponse.setThumbUrl(ThumbnailUtils.thumbnailImage(file, path.toString(), format));
-
-        this.streamBridge.send("sendContestImageResponseModel-out-0", imageResponse);
+    @Override
+    public Stream<Path> loadAll() {
+        try {
+            return Files.walk(this.rootLocation, 1)
+                    .filter(path -> !path.equals(this.rootLocation))
+                    .map(this.rootLocation::relativize);
+        } catch (IOException e) {
+            throw new StorageException("Failed to read stored files", e);
+        }
 
     }
 
     @Override
-    public AvatarImageResponseModel uploadAvatarImage(
-            MultipartFile multipartFile,
-            String userId,
-            String format
-    ) throws IOException {
-        String fileName = StringUtils.getFilename(multipartFile.getOriginalFilename());
-
-        File file = new File(this.getDirectoryPath(avatarPath, userId).toString(), fileName);
-        multipartFile.transferTo(file);
-
-        AvatarImageResponseModel avatarImage = new AvatarImageResponseModel();
-        avatarImage.setPngUrl(Path.of(file.toURI()).toString());
-        avatarImage.setThumbUrl(ThumbnailUtils.thumbnailImage
-                (file, this.getDirectoryPath(avatarPath, userId).toString(), format));
-        avatarImage.setUserId(userId);
-
-        return avatarImage;
-
+    public Path load(String filename) {
+        return rootLocation.resolve(filename);
     }
 
-    @Bean
-    public Supplier<Mono<ImageResponseModel>> sendImage() {
-        return () -> Mono.just(new ImageResponseModel());
-    }
-
-    @Bean
-    public Consumer<KStream<String, ImageRequestModel>> receiveImage() {
-        return input -> input.foreach((k, v) -> {
-            if (v.getId() == null) {
-                return;
+    @Override
+    public Resource loadAsResource(String filename) {
+        try {
+            Path file = load(filename);
+            Resource resource = new UrlResource(file.toUri());
+            if (resource.exists() || resource.isReadable()) {
+                return resource;
+            } else {
+                throw new FileNotFoundException(
+                        "Could not read file: " + filename);
             }
-
-            try {
-                this.uploadLectureImage(v.getImage(), v.getId(), v.getName(), v.getImageFormat());
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        });
-    }
-
-    private Path getDirectoryPath(String path, String id) throws IOException {
-        Path storagePath = Paths.get(path.concat("/").concat(id));
-
-        if (!Files.exists(storagePath)) {
-            Files.createDirectories(Path.of(path.concat("/").concat(id)));
+        } catch (MalformedURLException e) {
+            throw new FileNotFoundException("Could not read file: " + filename, e);
         }
-
-        return Paths.get(storagePath.toString());
     }
 
+    @Override
+    public void deleteAll() {
+        FileSystemUtils.deleteRecursively(rootLocation.toFile());
+    }
 }
