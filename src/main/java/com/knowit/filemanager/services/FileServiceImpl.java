@@ -14,6 +14,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.annotation.PostConstruct;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.MalformedURLException;
@@ -99,6 +100,19 @@ public class FileServiceImpl implements FileService {
             throw new FileNotFoundException("Could not read file: " + filename, e);
         }
     }
+
+    @Override
+    public File loadAsFile(String filename) {
+        Path filePath = load(filename);
+        File file = new File(filePath.toUri());
+        if (file.exists()) {
+            return file;
+        } else {
+            throw new FileNotFoundException(
+                    "Could not read file: " + filename);
+        }
+    }
+
 
     @Override
     public void deleteAll() {

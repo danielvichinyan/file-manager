@@ -4,6 +4,7 @@ import com.knowit.filemanager.models.FileResponseModel;
 import org.springframework.core.io.Resource;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
@@ -24,6 +25,8 @@ public interface FileService {
     Path load(String filename);
 
     Resource loadAsResource(String filename);
+
+    File loadAsFile(String filename);
 
     void deleteAll();
 }

@@ -2,14 +2,20 @@ package com.knowit.filemanager.controllers;
 
 import com.knowit.filemanager.models.FileResponseModel;
 import com.knowit.filemanager.services.FileService;
+import org.springframework.core.io.InputStreamResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.InputStream;
 import java.util.stream.Collectors;
 
 @RestController
@@ -47,15 +53,32 @@ public class FileController {
         return new FileResponseModel(name, uri, file.getContentType(), file.getSize());
     }
 
+//    @GetMapping("/download/{filename}")
+//    @ResponseBody
+//    public ResponseEntity<Resource> downloadFile(@PathVariable String filename) {
+//
+//        Resource resource = this.fileService.loadAsResource(filename);
+//
+//        return ResponseEntity.ok()
+//                .header(HttpHeaders.CONTENT_DISPOSITION,
+//                        "attachment; filename=\"" + resource.getFilename() + "\"")
+//                .body(resource);
+//    }
+
     @GetMapping("/download/{filename}")
     @ResponseBody
-    public ResponseEntity<Resource> downloadFile(@PathVariable String filename) {
+    public ResponseEntity<InputStreamResource> getFile(@PathVariable String filename) throws FileNotFoundException {
 
-        Resource resource = this.fileService.loadAsResource(filename);
+        File file = this.fileService.loadAsFile(filename);
 
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION,
-                        "attachment; filename=\"" + resource.getFilename() + "\"")
-                .body(resource);
+        InputStream inputStream = new FileInputStream(file.getPath());
+        HttpHeaders headers = new HttpHeaders();
+
+        headers.set("Accept-Ranges", "bytes");
+        headers.set("Content-Type", "video/mp4");
+        headers.set("Content-Range", "bytes 50-1025/17839845");
+        headers.set("Content-Length", String.valueOf(file.length()));
+
+        return new ResponseEntity<>(new InputStreamResource(inputStream), headers, HttpStatus.OK);
     }
 }
